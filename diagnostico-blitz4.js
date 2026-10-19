@@ -9,6 +9,12 @@ const log=(tag,data)=>console.log(JSON.stringify({at:new Date().toISOString(),ta
 socket.on('connect',()=>log('CONNECTED',{id:socket.id}));
 socket.on('disconnect',reason=>log('DISCONNECTED',{reason}));
 socket.on('connect_error',err=>log('CONNECT_ERROR',{message:err.message}));
-socket.onAny?.((name,...args)=>{ observed++; log('EVENT',{name,payloadType:typeof args[0],sample:JSON.stringify(args).slice(0,350)}); });
+const originalOnEvent = socket.onevent;
+socket.onevent = function(packet) {
+  observed++;
+  const name = Array.isArray(packet.data) ? String(packet.data[0]) : 'unknown';
+  log('EVENT', {name, observed}); // Names only: never log raw tokens or private payloads.
+  return originalOnEvent.call(this, packet);
+};
 socket.connect();
 setInterval(()=>log('HEARTBEAT',{connected:socket.connected,observed}),60000);
