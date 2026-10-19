@@ -1,4 +1,5 @@
 import json
+import csv
 import os
 import sqlite3
 import threading
@@ -15,6 +16,28 @@ DATA_DIR = Path(os.environ.get('BLITZ_DATA_DIR', '/tmp/blitz4-lab-data'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / 'rounds.sqlite3'
 LOCK = threading.Lock()
+
+HISTORY_FILE = ROOT / 'historico_7dias.csv'
+def archived_history():
+    if not HISTORY_FILE.exists():
+        return []
+    results = []
+    with HISTORY_FILE.open(encoding='utf-8-sig', newline='') as file:
+        for n, item in enumerate(csv.DictReader(file)):
+            try:
+                stone = int(item['number'])
+                stamp = item['timestamp'].strip()
+                if not 0 <= stone <= 14 or not re.fullmatch(r'20\\d{2}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}', stamp):
+                    continue
+                color = 'branco' if stone == 0 else 'amarelo' if stone < 8 else 'escuro'
+                if item['color'].strip() != color:
+                    continue
+                results.append({'id': 'archive-'+str(n), 'timestamp_utc': stamp+'-03:00', 'number': stone, 'color':color, 'source':'historico-7dias'})
+            except (ValueError, TypeError, KeyError):
+                continue
+    return results
+ARCHIVED = archived_history()
+
 INGEST_KEY = os.environ.get('BLITZ_INGEST_KEY', '').strip()
 EXTENSION_KEY = os.environ.get('BLITZ_EXTENSION_KEY', '').strip()
 COLORS = {'amarelo': 'amarelo', 'escuro': 'escuro', 'branco': 'branco'}
@@ -105,6 +128,8 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlsplit(self.path).path
         if p == '/health':
             return self.json_response(200, {'status': 'ok', 'app': 'double-insight-blitz4-lab'})
+        if p == '/api/historical/7days':
+            return self.json_response(200, {'loaded': bool(ARCHIVED), 'count':len(ARCHIVED),'whites':sum(r['number']==0 for r in ARCHIVED),'rounds':ARCHIVED})
         if p == '/api/replay/state':
             return self.json_response(200, replay_state())
         if p == '/api/status':
