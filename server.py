@@ -35,20 +35,7 @@ def replay_state():
     active = None
     recent = []
     for i in range(end):
-        stone = DEMO_ROUNDS[i]
-        if active:
-            phase = i - active['at']
-            if stone['c'] == active['color']:
-                wins += 1
-                if phase == 0: sg += 1
-                elif phase == 1: g1 += 1
-                else: g2 += 1
-                recent.append({'time': stone['t'], 'color': active['color'], 'result': ('SG','G1','G2')[phase]})
-                active = None
-            elif phase == 2:
-                losses += 1
-                recent.append({'time':stone['t'],'color':active['color'],'result':'LOSS'})
-                active = None
+        # Choose before observing this round: no future data enters the signal.
         if active is None and i >= 50:
             prior = DEMO_ROUNDS[i-50:i]
             black = sum(1 for x in prior if x['c']=='preto')
@@ -59,6 +46,20 @@ def replay_state():
                 quality = max(black, yellow)/total
                 if quality >= .56:
                     active = {'color':color, 'at':i, 'quality':round(quality, 3)}
+        stone = DEMO_ROUNDS[i]
+        if active is not None:
+            phase = i - active['at']
+            if stone['c'] == active['color']:
+                wins += 1
+                if phase == 0: sg += 1
+                elif phase == 1: g1 += 1
+                else: g2 += 1
+                recent.append({'time':stone['t'], 'color':active['color'], 'result':('SG','G1','G2')[phase]})
+                active = None
+            elif phase == 2:
+                losses += 1
+                recent.append({'time':stone['t'], 'color':active['color'], 'result':'LOSS'})
+                active = None
     return {
       'mode':'SERVER_HISTORICAL_REPLAY', 'live_connected':False,
       'processed':end, 'total':len(DEMO_ROUNDS), 'finished':end==len(DEMO_ROUNDS),
