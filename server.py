@@ -116,6 +116,26 @@ class Handler(SimpleHTTPRequestHandler):
                 'stored_rounds': count, 'latest_round_utc': latest[0] if latest else None,
                 'source': 'none', 'note': 'No external results feed is connected.'
             })
+        if p == '/api/live/state':
+            with db() as conn:
+                count = conn.execute('SELECT COUNT(*) FROM rounds').fetchone()[0]
+                last = conn.execute('SELECT id,ts,number,color,source,received FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
+            fresh = False
+            age = None
+            if last:
+                try:
+                    dt = datetime.fromisoformat(last[1].replace('Z','+00:00'))
+                    age = round((datetime.now(timezone.utc)-dt).total_seconds(), 1)
+                    fresh = -10 <= age <= 90
+                except (ValueError,TypeError):
+                    pass
+            return self.json_response(200, {
+              'mode': 'OBSERVATION_ONLY',
+              'connected': bool(fresh), 'fresh': bool(fresh),
+              'round_age_seconds': age, 'count': count,
+              'last_round': dict(zip(('id','timestamp_utc','number','color','source','received_at_utc'),last)) if last else None,
+              'message':'Recent incoming rounds observed; not a verified continuous feed.' if fresh else 'No fresh external results. Historical replay is separate.'
+            })
         if p == '/api/rounds':
             raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
             try: limit = min(500, max(1, int(raw_limit)))
@@ -126,7 +146,12 @@ class Handler(SimpleHTTPRequestHandler):
                 'live_connected': False,
                 'rounds': [dict(zip(('id','timestamp_utc','number','color','source'), r)) for r in reversed(rows)]
             })
-        return super().do_GET()
+        if p == '/':
+            self.path = '/index.html'
+            return super().do_GET()
+        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html'):
+            return super().do_GET()
+        return self.json_response(404, {'error':'not_found'})
 
     def do_POST(self):
         if urlsplit(self.path).path != '/api/ingest':
