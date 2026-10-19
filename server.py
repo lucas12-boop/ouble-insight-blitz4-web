@@ -16,6 +16,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / 'rounds.sqlite3'
 LOCK = threading.Lock()
 INGEST_KEY = os.environ.get('BLITZ_INGEST_KEY', '').strip()
+EXTENSION_KEY = os.environ.get('BLITZ_EXTENSION_KEY', '').strip()
 COLORS = {'amarelo': 'amarelo', 'escuro': 'escuro', 'branco': 'branco'}
 
 
@@ -157,9 +158,12 @@ class Handler(SimpleHTTPRequestHandler):
         if urlsplit(self.path).path != '/api/ingest':
             return self.json_response(404, {'error': 'not_found'})
         supplied = self.headers.get('X-Ingest-Key', '')
-        if not INGEST_KEY:
+        extension_supplied = self.headers.get('X-Extension-Key', '')
+        extension_auth = bool(EXTENSION_KEY and extension_supplied and hmac.compare_digest(extension_supplied, EXTENSION_KEY))
+        master_auth = bool(INGEST_KEY and supplied and hmac.compare_digest(supplied, INGEST_KEY))
+        if not INGEST_KEY and not EXTENSION_KEY:
             return self.json_response(503, {'error': 'ingestion_disabled'})
-        if not supplied or not hmac.compare_digest(supplied, INGEST_KEY):
+        if not extension_auth and not master_auth:
             return self.json_response(401, {'error': 'unauthorized'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
@@ -169,7 +173,7 @@ class Handler(SimpleHTTPRequestHandler):
             rid = str(payload['id']).strip()
             num = payload['number']
             stamp = str(payload['timestamp_utc']).strip()
-            src = str(payload.get('source','approved_feed')).strip()
+            src = 'tipminer_dom_observation_not_game_time' if extension_auth else str(payload.get('source','approved_feed')).strip()
             parsed = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
             if parsed.tzinfo is None: raise ValueError('Timezone required')
             stamp = parsed.astimezone(timezone.utc).isoformat()
@@ -179,6 +183,8 @@ class Handler(SimpleHTTPRequestHandler):
             skew = (parsed.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
             if skew > 10 or skew < -86400:
                 return self.json_response(422, {'error':'timestamp_outside_allowed_window'})
+            if extension_auth and (num == 0 or not rid.startswith('dom-')):
+                return self.json_response(422, {'error':'extension_non_numeric_or_invalid_id'})
             color = 'branco' if num == 0 else 'amarelo' if num <= 7 else 'escuro'
             if payload.get('color', color) != color:
                 raise ValueError('Color mismatch')
