@@ -31,9 +31,9 @@ async function update(){
    state.seen=round.id;
   }
   save();render();
-  const c=state.open;
-  $('stage').textContent=c?label(c.color)+' · '+['SG','G1','G2'][c.step]:'AGUARDANDO CANDIDATO';
-  $('detail').textContent=c?'A cor é uma hipótese experimental, registrada antes da próxima pedra.':'Regra: janela de 50 pedras, maioria ≥56%. Sem candidato no momento.';
+  const c=state.open;const w=rows.slice(-50),y=w.filter(x=>x.color==='amarelo').length,d=w.filter(x=>x.color==='escuro').length,n=y+d,preview=strategy(rows);
+  $('stage').textContent=c?label(c.color)+' · '+['SG','G1','G2'][Math.min(c.step,2)]:(preview?label(preview)+' · PRÓXIMA HIPÓTESE':'AGUARDANDO CANDIDATO');
+  $('detail').textContent=(c?'Em acompanhamento. A cor foi escolhida antes da pedra seguinte. ':'Candidato calculado sobre as pedras já recebidas; a próxima pedra ainda não foi avaliada. ')+ 'Janela 50: '+y+' amarelas, '+d+' escuras, '+(50-n)+' brancos/outros. '+(preview?'Predominância '+(100*Math.max(y,d)/Math.max(n,1)).toFixed(1)+'%.':'Filtro de 56% não atingido.');
   $('integrity').textContent='Qualidade NÃO VALIDADA: a extensão ainda pode omitir brancos ou pedras.';
   $('lastUpdate').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR')+' · '+rows.length+' pedras disponíveis na API (janela até 500).';
  }catch(e){$('stage').textContent='ERRO DE CONSULTA';$('detail').textContent=e.message}
