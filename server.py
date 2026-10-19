@@ -3,6 +3,8 @@ import os
 import sqlite3
 import threading
 import hmac
+import re
+import time
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,6 +17,57 @@ DB_PATH = DATA_DIR / 'rounds.sqlite3'
 LOCK = threading.Lock()
 INGEST_KEY = os.environ.get('BLITZ_INGEST_KEY', '').strip()
 COLORS = {'amarelo': 'amarelo', 'escuro': 'escuro', 'branco': 'branco'}
+
+
+REPLAY_START = time.time()
+def load_demo():
+    content = (ROOT / 'index.html').read_text(encoding='utf-8')
+    match = re.search(r'const initialData=(\[.*?\]);\s*let data=', content, re.S)
+    return json.loads(match.group(1)) if match else []
+try:
+    DEMO_ROUNDS = load_demo()
+except (ValueError, OSError):
+    DEMO_ROUNDS = []
+
+def replay_state():
+    end = min(len(DEMO_ROUNDS), max(0, int(time.time() - REPLAY_START)))
+    wins = losses = sg = g1 = g2 = 0
+    active = None
+    recent = []
+    for i in range(end):
+        stone = DEMO_ROUNDS[i]
+        if active:
+            phase = i - active['at']
+            if stone['c'] == active['color']:
+                wins += 1
+                if phase == 0: sg += 1
+                elif phase == 1: g1 += 1
+                else: g2 += 1
+                recent.append({'time': stone['t'], 'color': active['color'], 'result': ('SG','G1','G2')[phase]})
+                active = None
+            elif phase == 2:
+                losses += 1
+                recent.append({'time':stone['t'],'color':active['color'],'result':'LOSS'})
+                active = None
+        if active is None and i >= 50:
+            prior = DEMO_ROUNDS[i-50:i]
+            black = sum(1 for x in prior if x['c']=='preto')
+            yellow = sum(1 for x in prior if x['c']=='vermelho')
+            total = black + yellow
+            if total >= 25:
+                color = 'preto' if black >= yellow else 'vermelho'
+                quality = max(black, yellow)/total
+                if quality >= .56:
+                    active = {'color':color, 'at':i, 'quality':round(quality, 3)}
+    return {
+      'mode':'SERVER_HISTORICAL_REPLAY', 'live_connected':False,
+      'processed':end, 'total':len(DEMO_ROUNDS), 'finished':end==len(DEMO_ROUNDS),
+      'last_round':DEMO_ROUNDS[end-1] if end else None,
+      'stones':DEMO_ROUNDS[max(0,end-30):end],
+      'signal':active, 'greens':wins,'loss':losses,'sg':sg,'g1':g1,'g2':g2,
+      'recent':recent[-12:][::-1],
+      'disclaimer':'Accelerated historical simulation only. No live feed or bets.'
+    }
 
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=15)
@@ -50,6 +103,8 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlsplit(self.path).path
         if p == '/health':
             return self.json_response(200, {'status': 'ok', 'app': 'double-insight-blitz4-lab'})
+        if p == '/api/replay/state':
+            return self.json_response(200, replay_state())
         if p == '/api/status':
             with db() as conn:
                 count = conn.execute('SELECT COUNT(*) FROM rounds').fetchone()[0]
