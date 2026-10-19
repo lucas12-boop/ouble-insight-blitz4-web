@@ -175,6 +175,10 @@ class Handler(SimpleHTTPRequestHandler):
             stamp = parsed.astimezone(timezone.utc).isoformat()
             if not rid or len(rid) > 100 or not isinstance(num,int) or isinstance(num,bool) or not 0 <= num <= 14 or len(src)>80 or not src:
                 raise ValueError('Invalid fields')
+            # Prevent fake future timestamps from marking the feed as healthy.
+            skew = (parsed.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+            if skew > 10 or skew < -86400:
+                return self.json_response(422, {'error':'timestamp_outside_allowed_window'})
             color = 'branco' if num == 0 else 'amarelo' if num <= 7 else 'escuro'
             if payload.get('color', color) != color:
                 raise ValueError('Color mismatch')
@@ -183,9 +187,9 @@ class Handler(SimpleHTTPRequestHandler):
                     last = conn.execute('SELECT id, ts FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
                     if last and stamp < last[1]:
                         return self.json_response(409, {'error':'out_of_order', 'last_round_utc':last[1]})
-                    present = conn.execute('SELECT ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
+                    present = conn.execute('SELECT id,ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
                     if present:
-                        return self.json_response(200 if present==(stamp,num) else 409, {'status':'duplicate' if present==(stamp,num) else 'conflict'})
+                        return self.json_response(200 if present==(rid,stamp,num) else 409, {'status':'duplicate' if present==(stamp,num) else 'conflict'})
                     conn.execute('INSERT INTO rounds VALUES (?,?,?,?,?,?)', (rid,stamp,num,color,src,now_iso()))
             return self.json_response(201, {'status':'accepted','id':rid,'color':color})
         except (ValueError,KeyError,TypeError,json.JSONDecodeError):
