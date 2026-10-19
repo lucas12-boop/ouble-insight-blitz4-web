@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "diagnostico": "node diagnostico-blitz4.js"
+  },
+  "dependencies": {
+    "socket.io-client": "2.5.0"
+  }
+}
