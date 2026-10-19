@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get('BLITZ_DATA_DIR', str(ROOT / 'data')))
+DATA_DIR = Path(os.environ.get('BLITZ_DATA_DIR', '/tmp/blitz4-lab-data'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / 'rounds.sqlite3'
 LOCK = threading.Lock()
