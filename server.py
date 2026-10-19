@@ -149,7 +149,7 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/':
             self.path = '/index.html'
             return super().do_GET()
-        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html'):
+        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html'):
             return super().do_GET()
         return self.json_response(404, {'error':'not_found'})
 
