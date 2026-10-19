@@ -139,7 +139,7 @@ class Handler(SimpleHTTPRequestHandler):
             })
         if p == '/api/rounds':
             raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
-            try: limit = min(500, max(1, int(raw_limit)))
+            try: limit = min(3000, max(1, int(raw_limit)))
             except ValueError: limit = 100
             with db() as conn:
                 rows = conn.execute('SELECT id, ts, number, color, source FROM rounds ORDER BY ts DESC LIMIT ?', (limit,)).fetchall()
