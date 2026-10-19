@@ -189,7 +189,7 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.json_response(409, {'error':'out_of_order', 'last_round_utc':last[1]})
                     present = conn.execute('SELECT id,ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
                     if present:
-                        return self.json_response(200 if present==(rid,stamp,num) else 409, {'status':'duplicate' if present==(stamp,num) else 'conflict'})
+                        return self.json_response(200 if present==(rid,stamp,num) else 409, {'status':'duplicate' if present==(rid,stamp,num) else 'conflict'})
                     conn.execute('INSERT INTO rounds VALUES (?,?,?,?,?,?)', (rid,stamp,num,color,src,now_iso()))
             return self.json_response(201, {'status':'accepted','id':rid,'color':color})
         except (ValueError,KeyError,TypeError,json.JSONDecodeError):
