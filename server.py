@@ -1,29 +1,120 @@
+import json
 import os
+import sqlite3
+import threading
+import hmac
+from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get('BLITZ_DATA_DIR', str(ROOT / 'data')))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / 'rounds.sqlite3'
+LOCK = threading.Lock()
+INGEST_KEY = os.environ.get('BLITZ_INGEST_KEY', '').strip()
+COLORS = {'amarelo': 'amarelo', 'escuro': 'escuro', 'branco': 'branco'}
+
+def db():
+    connection = sqlite3.connect(DB_PATH, timeout=15)
+    connection.execute('PRAGMA busy_timeout=15000')
+    connection.execute('''CREATE TABLE IF NOT EXISTS rounds (
+        id TEXT PRIMARY KEY, ts TEXT NOT NULL UNIQUE,
+        number INTEGER NOT NULL, color TEXT NOT NULL,
+        source TEXT NOT NULL, received TEXT NOT NULL
+    )''')
+    connection.commit()
+    return connection
+
+with db() as conn:
+    pass
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def json_response(self, status, body):
+        raw = json.dumps(body, ensure_ascii=False).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
     def do_GET(self):
-        if self.path.split('?', 1)[0] == '/health':
-            data = b'{"status":"ok","app":"double-insight-blitz4-lab"}'
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
+        p = urlsplit(self.path).path
+        if p == '/health':
+            return self.json_response(200, {'status': 'ok', 'app': 'double-insight-blitz4-lab'})
+        if p == '/api/status':
+            with db() as conn:
+                count = conn.execute('SELECT COUNT(*) FROM rounds').fetchone()[0]
+                latest = conn.execute('SELECT ts FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
+            return self.json_response(200, {
+                'mode': 'historical_lab', 'live_connected': False,
+                'ingestion_enabled': bool(INGEST_KEY),
+                'stored_rounds': count, 'latest_round_utc': latest[0] if latest else None,
+                'source': 'none', 'note': 'No external results feed is connected.'
+            })
+        if p == '/api/rounds':
+            raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
+            try: limit = min(500, max(1, int(raw_limit)))
+            except ValueError: limit = 100
+            with db() as conn:
+                rows = conn.execute('SELECT id, ts, number, color, source FROM rounds ORDER BY ts DESC LIMIT ?', (limit,)).fetchall()
+            return self.json_response(200, {
+                'live_connected': False,
+                'rounds': [dict(zip(('id','timestamp_utc','number','color','source'), r)) for r in reversed(rows)]
+            })
         return super().do_GET()
 
+    def do_POST(self):
+        if urlsplit(self.path).path != '/api/ingest':
+            return self.json_response(404, {'error': 'not_found'})
+        supplied = self.headers.get('X-Ingest-Key', '')
+        if not INGEST_KEY:
+            return self.json_response(503, {'error': 'ingestion_disabled'})
+        if not supplied or not hmac.compare_digest(supplied, INGEST_KEY):
+            return self.json_response(401, {'error': 'unauthorized'})
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if size < 2 or size > 4096:
+                return self.json_response(413, {'error': 'payload_size_invalid'})
+            payload = json.loads(self.rfile.read(size))
+            rid = str(payload['id']).strip()
+            num = payload['number']
+            stamp = str(payload['timestamp_utc']).strip()
+            src = str(payload.get('source','approved_feed')).strip()
+            parsed = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            if parsed.tzinfo is None: raise ValueError('Timezone required')
+            stamp = parsed.astimezone(timezone.utc).isoformat()
+            if not rid or len(rid) > 100 or not isinstance(num,int) or isinstance(num,bool) or not 0 <= num <= 14 or len(src)>80 or not src:
+                raise ValueError('Invalid fields')
+            color = 'branco' if num == 0 else 'amarelo' if num <= 7 else 'escuro'
+            if payload.get('color', color) != color:
+                raise ValueError('Color mismatch')
+            with LOCK:
+                with db() as conn:
+                    last = conn.execute('SELECT id, ts FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
+                    if last and stamp < last[1]:
+                        return self.json_response(409, {'error':'out_of_order', 'last_round_utc':last[1]})
+                    present = conn.execute('SELECT ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
+                    if present:
+                        return self.json_response(200 if present==(stamp,num) else 409, {'status':'duplicate' if present==(stamp,num) else 'conflict'})
+                    conn.execute('INSERT INTO rounds VALUES (?,?,?,?,?,?)', (rid,stamp,num,color,src,now_iso()))
+            return self.json_response(201, {'status':'accepted','id':rid,'color':color})
+        except (ValueError,KeyError,TypeError,json.JSONDecodeError):
+            return self.json_response(400, {'error':'invalid_round'})
+
     def end_headers(self):
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Referrer-Policy','no-referrer')
         super().end_headers()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', '8080'))
-    ThreadingHTTPServer(('0.0.0.0', port), Handler).serve_forever()
+    port = int(os.environ.get('PORT','8080'))
+    ThreadingHTTPServer(('0.0.0.0',port),Handler).serve_forever()
