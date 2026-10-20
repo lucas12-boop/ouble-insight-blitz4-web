@@ -183,7 +183,7 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/':
             self.path = '/index.html'
             return super().do_GET()
-        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html','/extensao.html','/Insight-Blitz4-TipMiner-Extensao.zip'):
+        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html','/extensao.html','/historico-servidor.html','/Insight-Blitz4-TipMiner-Extensao.zip'):
             return super().do_GET()
         return self.json_response(404, {'error':'not_found'})
 
