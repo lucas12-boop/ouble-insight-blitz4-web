@@ -173,6 +173,8 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/api/capture/health':
             with db() as conn:
                 recent = conn.execute('SELECT ts,received,number,color,source FROM rounds ORDER BY received DESC LIMIT 120').fetchall()
+                white_count = conn.execute('SELECT COUNT(*) FROM rounds WHERE number=0').fetchone()[0]
+                last_white = conn.execute('SELECT ts,received FROM rounds WHERE number=0 ORDER BY received DESC LIMIT 1').fetchone()
             age = None
             if recent:
                 try: age = max(0,round((datetime.now(timezone.utc)-datetime.fromisoformat(recent[0][1])).total_seconds(),1))
@@ -181,7 +183,7 @@ class Handler(SimpleHTTPRequestHandler):
             for ts,received,*_ in recent:
                 try: delays.append(max(0,(datetime.fromisoformat(received)-datetime.fromisoformat(ts)).total_seconds()))
                 except (ValueError,TypeError): continue
-            return self.json_response(200, {'status': 'waiting' if age is None else ('stale' if age>90 else 'receiving'), 'last_received_age_seconds':age, 'latest_number':recent[0][2] if recent else None,'latest_color':recent[0][3] if recent else None,'latest_source':recent[0][4] if recent else None,'recent_count':len(recent),'receive_lag_seconds_median':round(sorted(delays)[len(delays)//2],1) if delays else None,'note':'Timestamps from extension are observation times, not official game round times.'})
+            return self.json_response(200, {'status': 'waiting' if age is None else ('stale' if age>90 else 'receiving'), 'last_received_age_seconds':age, 'latest_number':recent[0][2] if recent else None,'latest_color':recent[0][3] if recent else None,'latest_source':recent[0][4] if recent else None,'recent_count':len(recent),'live_white_count':white_count,'last_live_white_received_utc':last_white[1] if last_white else None,'receive_lag_seconds_median':round(sorted(delays)[len(delays)//2],1) if delays else None,'note':'Timestamps from extension are observation times, not official game round times.'})
         if p == '/api/rounds':
             raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
             try: limit = min(3000, max(1, int(raw_limit)))
