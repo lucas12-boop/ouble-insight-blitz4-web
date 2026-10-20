@@ -237,6 +237,17 @@ class Handler(SimpleHTTPRequestHandler):
                 try: delays.append(max(0,(datetime.fromisoformat(received)-datetime.fromisoformat(ts)).total_seconds()))
                 except (ValueError,TypeError): continue
             return self.json_response(200, {'status': 'waiting' if age is None else ('stale' if age>90 else 'receiving'), 'last_received_age_seconds':age, 'latest_number':recent[0][2] if recent else None,'latest_color':recent[0][3] if recent else None,'latest_source':recent[0][4] if recent else None,'recent_count':len(recent),'live_white_count':white_count,'last_live_white_received_utc':last_white[1] if last_white else None,'receive_lag_seconds_median':round(sorted(delays)[len(delays)//2],1) if delays else None,'note':'Timestamps from extension are observation times, not official game round times.'})
+        if p == '/api/capture/recent':
+            with db() as conn:
+                rows = conn.execute('SELECT id,ts,received,number,color,source FROM rounds ORDER BY received DESC LIMIT 30').fetchall()
+            entries = []
+            for rid,ts,received,num,color,source in rows:
+                try:
+                    lag = round((datetime.fromisoformat(received)-datetime.fromisoformat(ts)).total_seconds(),2)
+                except (ValueError,TypeError):
+                    lag = None
+                entries.append({'id':rid,'observed_utc':ts,'received_utc':received,'number':num,'color':color,'source':source,'transport_lag_seconds':lag})
+            return self.json_response(200,{'count':len(entries),'rounds':entries,'warning':'Observed timestamp is not verified official round time.'})
         if p == '/api/rounds':
             raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
             try: limit = min(3000, max(1, int(raw_limit)))
