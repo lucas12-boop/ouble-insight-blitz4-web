@@ -170,6 +170,18 @@ class Handler(SimpleHTTPRequestHandler):
               'last_round': dict(zip(('id','timestamp_utc','number','color','source','received_at_utc'),last)) if last else None,
               'message':'Recent incoming rounds observed; not a verified continuous feed.' if fresh else 'No fresh external results. Historical replay is separate.'
             })
+        if p == '/api/capture/health':
+            with db() as conn:
+                recent = conn.execute('SELECT ts,received,number,color,source FROM rounds ORDER BY received DESC LIMIT 120').fetchall()
+            age = None
+            if recent:
+                try: age = max(0,round((datetime.now(timezone.utc)-datetime.fromisoformat(recent[0][1])).total_seconds(),1))
+                except (ValueError,TypeError): pass
+            delays=[]
+            for ts,received,*_ in recent:
+                try: delays.append(max(0,(datetime.fromisoformat(received)-datetime.fromisoformat(ts)).total_seconds()))
+                except (ValueError,TypeError): continue
+            return self.json_response(200, {'status': 'waiting' if age is None else ('stale' if age>90 else 'receiving'), 'last_received_age_seconds':age, 'latest_number':recent[0][2] if recent else None,'latest_color':recent[0][3] if recent else None,'latest_source':recent[0][4] if recent else None,'recent_count':len(recent),'receive_lag_seconds_median':round(sorted(delays)[len(delays)//2],1) if delays else None,'note':'Timestamps from extension are observation times, not official game round times.'})
         if p == '/api/rounds':
             raw_limit = parse_qs(urlsplit(self.path).query).get('limit', ['100'])[0]
             try: limit = min(3000, max(1, int(raw_limit)))
