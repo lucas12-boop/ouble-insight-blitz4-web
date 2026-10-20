@@ -48,9 +48,10 @@ function choose(rows){
  for(let i=0;i<group.length;i++){const g=group[i];if(g.n)vote[g.color]+=weight[i]*(g.rate-.5)}
  const best=vote.amarelo>=vote.escuro?'amarelo':'escuro';const agreement=group.filter(g=>g.color===best).length;
  const reason='Multihorizonte 20/50/1200/7D: '+group.map((g,i)=>['20','50','1200','7D'][i]+' '+g.a+'/'+g.b).join(' · ')+'; Casas Fortes após nº '+lastNumber+': '+houses.total+' casos, '+(100*houses[best]).toFixed(1)+'% '+best+', '+(100*houses.branco).toFixed(1)+'% branco. Modelo experimental, não motor original.';
- if(x50.rate<.56)return {color:null,why:reason+' Sem predominância de 56% na janela 50.'};
- if(agreement<3)return {color:null,why:reason+' Apenas '+agreement+'/4 horizontes concordam.'};
- if(houses.total<70||houses[best]<.43)return {color:null,why:reason+' Casa não aprovada pelo filtro histórico.'};
+ if(x50.rate<.54)return {color:null,why:reason+' Perfil LAB equilibrado: predominância abaixo de 54% na janela 50.'};
+ if(agreement<2)return {color:null,why:reason+' Perfil LAB equilibrado: apenas '+agreement+'/4 horizontes concordam.'};
+ // Casas Fortes permanece no relatório, sem veto adicional experimental.
+ // A captura atrasada/lacunas continuam bloqueadas em tick(), independentemente deste perfil.
  return {color:best,why:reason}
 }
 function finish(round,result){st[result.toLowerCase()]++;st.results.push({color:st.pending.color,after:st.pending.after,step:st.pending.step,outcome:result,number:round.number,roundId:round.id,time:round.timestamp_utc,why:st.pending.why});st.results=st.results.slice(-200);event('RESULT',result+' '+cName(st.pending.color)+' · pedra '+round.number);st.pending=null}
