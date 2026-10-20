@@ -152,6 +152,7 @@ class Handler(SimpleHTTPRequestHandler):
         raw = json.dumps(body, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        if getattr(self,'_rounds_etag',None): self.send_header('ETag',self._rounds_etag)
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(raw)))
         self.end_headers()
@@ -241,7 +242,16 @@ class Handler(SimpleHTTPRequestHandler):
             try: limit = min(3000, max(1, int(raw_limit)))
             except ValueError: limit = 100
             with db() as conn:
+                latest = conn.execute('SELECT id FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
+                latest_id = latest[0] if latest else ''
+                if latest_id and self.headers.get('If-None-Match','') == '"'+latest_id+'"':
+                    self.send_response(304)
+                    self.send_header('Cache-Control','no-store')
+                    self.send_header('ETag','"'+latest_id+'"')
+                    self.end_headers()
+                    return
                 rows = conn.execute('SELECT id, ts, number, color, source, received FROM rounds ORDER BY ts DESC LIMIT ?', (limit,)).fetchall()
+            self._rounds_etag = '"'+latest_id+'"'
             return self.json_response(200, {
                 'live_connected': False,
                 'rounds': [dict(zip(('id','timestamp_utc','number','color','source','received_utc'), r)) for r in reversed(rows)]
