@@ -126,6 +126,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         p = urlsplit(self.path).path
+        if p == '/api/extension/version':
+            package = ROOT / 'Insight-Blitz4-TipMiner-Extensao.zip'
+            return self.json_response(200, {'version': '0.11.0' if package.exists() else None, 'download': '/Insight-Blitz4-TipMiner-Extensao.zip' if package.exists() else None, 'auto_update':False})
         if p == '/health':
             return self.json_response(200, {'status': 'ok', 'app': 'double-insight-blitz4-lab'})
         if p == '/api/historical/7days':
@@ -175,7 +178,7 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/':
             self.path = '/index.html'
             return super().do_GET()
-        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html'):
+        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html','/extensao.html','/Insight-Blitz4-TipMiner-Extensao.zip'):
             return super().do_GET()
         return self.json_response(404, {'error':'not_found'})
 
