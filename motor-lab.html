@@ -99,21 +99,20 @@ function render(rows){
  const minuteRows=whiteMinuteStudy(radarData);renderTable('whiteMinutes',minuteRows,x=>[x.clock,x.whites,x.rounds,x.rate.toFixed(2)+'%',x.days+' dias']);$('whiteMinutesNote').textContent=minuteRows.length?'Arquivo e novas pedras recebidas, agrupados por horário completo HH:MM (Brasília); selecionados por recorrência e apresentados em ordem cronológica. Horários dependem dos registros enviados pela extensão; amostra não indica acerto futuro.':'Aguardando importação dos sete dias; nenhum horário inventado.';
  renderTable('events',st.events.slice().reverse().slice(0,30),x=>[x.when,x.type,x.detail]);$('summary').textContent='Eventos: '+st.events.length+' · Operações: '+st.results.length+' · Última pedra processada: '+(st.seen||'—');
 }
-let lastRoundsEtag='';
+let lastRoundsEtag='';let lastServerReceiptUTC=null;
 async function tick(){
  try{const headers=lastRoundsEtag?{'If-None-Match':lastRoundsEtag}:{};const r=await fetch('/api/rounds?limit=500',{cache:'no-store',headers});
  if(r.status===304){
-   const latest=st.history?.at(-1);const received=latest?.received_utc||latest?.timestamp_utc;
-   const age=Date.now()-Date.parse(received||'');
+   const age=Date.now()-Date.parse(lastServerReceiptUTC||'');
    if(!Number.isFinite(age)||age>20000){
      st.pending=null;st.started=false;st.seen=null;window.__signalWaitReason='Extensão sem novos envios há mais de 20s; verificar chave, envio ativado e fila no popup';persist();$('connection').textContent='⚠ SEM DADOS NOVOS DA EXTENSÃO · COR SUSPENSA';
    }else $('connection').textContent='AGUARDANDO PRÓXIMA PEDRA · '+Math.round(age/1000)+'s desde recebimento';
    return;
  }
  if(!r.ok)throw Error('API HTTP '+r.status);lastRoundsEtag=r.headers.get('ETag')||'';
- const raw=(await r.json()).rounds||[];
+ const payload=await r.json();lastServerReceiptUTC=payload.last_received_utc||null;const raw=payload.rounds||[];
  if(!raw.length){$('connection').textContent='CAPTURA INDISPONÍVEL · SEM PEDRAS';st.pending=null;render([]);return}
- st.history=raw.slice(-500);const latest=raw.at(-1),newest=Date.parse(latest.received_utc||latest.timestamp_utc);const stale=!Number.isFinite(newest)||Date.now()-newest>20000;if(stale){window.__signalWaitReason='Extensão não está transmitindo pedras em tempo real; a cor fica suspensa para não errar a rodada';st.pending=null;st.started=false;st.seen=null;persist();render(raw);$('connection').textContent='⚠ SEM DADOS NOVOS DA EXTENSÃO · COR SUSPENSA';return}
+ st.history=raw.slice(-500);const latest=raw.at(-1),newest=Date.parse(latest.received_utc||latest.timestamp_utc);const stale=!Number.isFinite(newest)||Date.now()-newest>20000;if(stale){const lastReceiptAge=Date.now()-Date.parse(lastServerReceiptUTC||'');window.__signalWaitReason=Number.isFinite(lastReceiptAge)&&lastReceiptAge<=20000?'Railway recebeu histórico atrasado, mas ainda não há rodada atual confirmada; sinais suspensos':'Extensão sem envios recentes ou sem rodada atual confirmada; sinais suspensos';st.pending=null;st.started=false;st.seen=null;persist();render(raw);$('connection').textContent=window.__signalWaitReason;return}
  if(!st.started){st.started=true;st.seen=raw.at(-1).id;event('START','Sessão iniciada após '+st.seen);const pick=choose(raw);window.__signalWaitReason=pick.why;if(pick.color){st.pending={color:pick.color,why:pick.why,after:raw.at(-1),step:0,displayed:true};event('SIGNAL','Novo sinal observado após pedra '+raw.at(-1).number)}persist();render(raw);$('connection').textContent='Sessão iniciada';return}
  if(st.seen===raw.at(-1).id){const since=Math.max(0,Math.round((Date.now()-Date.parse(raw.at(-1).received_utc||raw.at(-1).timestamp_utc))/1000));const wait=st.pending?'Sinal em acompanhamento':'Filtro: '+choose(raw).why;$('connection').textContent='ÚLTIMA PEDRA HÁ '+since+'s · '+wait+' · '+raw.length+' pedras';window.__signalWaitReason=st.pending?'Aguardando resultado da próxima rodada':choose(raw).why;return}
  let i=raw.findIndex(x=>x.id===st.seen);
