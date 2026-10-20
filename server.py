@@ -130,16 +130,41 @@ def replay_state():
 def db():
     connection = sqlite3.connect(DB_PATH, timeout=15)
     connection.execute('PRAGMA busy_timeout=15000')
-    connection.execute('''CREATE TABLE IF NOT EXISTS rounds (
-        id TEXT PRIMARY KEY, ts TEXT NOT NULL UNIQUE,
+    connection.execute("""CREATE TABLE IF NOT EXISTS rounds (
+        id TEXT PRIMARY KEY, ts TEXT NOT NULL,
         number INTEGER NOT NULL, color TEXT NOT NULL,
         source TEXT NOT NULL, received TEXT NOT NULL
-    )''')
+    )""")
     connection.commit()
     return connection
 
-with db() as conn:
-    pass
+def ensure_round_schema():
+    # Older builds applied UNIQUE(ts). Observation timestamps are not round IDs.
+    # Rebuild transactionally; existing records survive and no new timestamp constraint is created.
+    with db() as conn:
+        indexes = conn.execute("PRAGMA index_list('rounds')").fetchall()
+        has_unique_ts = any(row[2] and
+            [c[2] for c in conn.execute("PRAGMA index_info('"+row[1]+"')").fetchall()] == ['ts']
+            for row in indexes)
+        if not has_unique_ts:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("ALTER TABLE rounds RENAME TO rounds_before_ts_migration")
+            conn.execute("""CREATE TABLE rounds (
+                id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+                number INTEGER NOT NULL, color TEXT NOT NULL,
+                source TEXT NOT NULL, received TEXT NOT NULL
+            )""")
+            conn.execute("""INSERT INTO rounds (id,ts,number,color,source,received)
+                         SELECT id,ts,number,color,source,received FROM rounds_before_ts_migration""")
+            conn.execute("DROP TABLE rounds_before_ts_migration")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+ensure_round_schema()
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -377,7 +402,7 @@ class Handler(SimpleHTTPRequestHandler):
                     # Backfill may arrive late from the extension. Store it without treating it as the latest live round.
                     # The live endpoint orders by observation time; delayed/batched stones never create retroactive GREENs.
                     delayed = bool(last and stamp < last[1])
-                    present = conn.execute('SELECT id,ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
+                    present = conn.execute('SELECT id,ts,number FROM rounds WHERE id=?',(rid,)).fetchone()
                     if present:
                         return self.json_response(200 if present==(rid,stamp,num) else 409, {'status':'duplicate' if present==(rid,stamp,num) else 'conflict'})
                     conn.execute('INSERT INTO rounds VALUES (?,?,?,?,?,?)', (rid,stamp,num,color,src,now_iso()))
