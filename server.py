@@ -363,13 +363,14 @@ class Handler(SimpleHTTPRequestHandler):
             with LOCK:
                 with db() as conn:
                     last = conn.execute('SELECT id, ts FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
-                    if last and stamp < last[1]:
-                        return self.json_response(409, {'error':'out_of_order', 'last_round_utc':last[1]})
+                    # Backfill may arrive late from the extension. Store it without treating it as the latest live round.
+                    # The live endpoint orders by observation time; delayed/batched stones never create retroactive GREENs.
+                    delayed = bool(last and stamp < last[1])
                     present = conn.execute('SELECT id,ts,number FROM rounds WHERE id=? OR ts=?',(rid,stamp)).fetchone()
                     if present:
                         return self.json_response(200 if present==(rid,stamp,num) else 409, {'status':'duplicate' if present==(rid,stamp,num) else 'conflict'})
                     conn.execute('INSERT INTO rounds VALUES (?,?,?,?,?,?)', (rid,stamp,num,color,src,now_iso()))
-            return self.json_response(201, {'status':'accepted','id':rid,'color':color})
+            return self.json_response(201, {'status':'accepted','id':rid,'color':color,'backfill':delayed})
         except (ValueError,KeyError,TypeError,json.JSONDecodeError):
             return self.json_response(400, {'error':'invalid_round'})
 
