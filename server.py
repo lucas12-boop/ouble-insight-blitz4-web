@@ -278,8 +278,9 @@ class Handler(SimpleHTTPRequestHandler):
             try: limit = min(3000, max(1, int(raw_limit)))
             except ValueError: limit = 100
             with db() as conn:
-                latest = conn.execute('SELECT id FROM rounds ORDER BY ts DESC LIMIT 1').fetchone()
+                latest = conn.execute('SELECT id,received FROM rounds ORDER BY received DESC, rowid DESC LIMIT 1').fetchone()
                 latest_id = latest[0] if latest else ''
+                latest_received = latest[1] if latest else None
                 if latest_id and self.headers.get('If-None-Match','') == '"'+latest_id+'"':
                     self.send_response(304)
                     self.send_header('Cache-Control','no-store')
@@ -290,6 +291,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._rounds_etag = '"'+latest_id+'"'
             return self.json_response(200, {
                 'live_connected': False,
+                'last_received_utc': latest_received,
                 'rounds': [dict(zip(('id','timestamp_utc','number','color','source','received_utc'), r)) for r in reversed(rows)]
             })
         if p == '/':
