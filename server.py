@@ -30,7 +30,7 @@ def archived_history():
             try:
                 stone = int(item['number'])
                 stamp = item['timestamp'].strip()
-                if not 0 <= stone <= 14 or not re.fullmatch(r'20\\d{2}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}', stamp):
+                if not 0 <= stone <= 14 or not re.fullmatch(r'20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', stamp):
                     continue
                 color = 'branco' if stone == 0 else 'amarelo' if stone < 8 else 'escuro'
                 if item['color'].strip() != color:
@@ -207,7 +207,7 @@ class Handler(SimpleHTTPRequestHandler):
                     n = int(item['number'])
                     stamp = item['timestamp'].strip()
                     color = 'branco' if n == 0 else 'amarelo' if n <= 7 else 'escuro'
-                    if n < 0 or n > 14 or item['color'].strip() != color or not re.fullmatch(r'20\\d{2}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}',stamp):
+                    if n < 0 or n > 14 or item['color'].strip() != color or not re.fullmatch(r'20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}',stamp):
                         raise ValueError('csv_data_invalid')
                     valid.append(item)
                 with LOCK:
