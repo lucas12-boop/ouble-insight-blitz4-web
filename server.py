@@ -189,10 +189,10 @@ class Handler(SimpleHTTPRequestHandler):
             try: limit = min(3000, max(1, int(raw_limit)))
             except ValueError: limit = 100
             with db() as conn:
-                rows = conn.execute('SELECT id, ts, number, color, source FROM rounds ORDER BY ts DESC LIMIT ?', (limit,)).fetchall()
+                rows = conn.execute('SELECT id, ts, number, color, source, received FROM rounds ORDER BY ts DESC LIMIT ?', (limit,)).fetchall()
             return self.json_response(200, {
                 'live_connected': False,
-                'rounds': [dict(zip(('id','timestamp_utc','number','color','source'), r)) for r in reversed(rows)]
+                'rounds': [dict(zip(('id','timestamp_utc','number','color','source','received_utc'), r)) for r in reversed(rows)]
             })
         if p == '/':
             self.path = '/index.html'
