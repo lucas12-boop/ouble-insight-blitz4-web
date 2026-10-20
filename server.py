@@ -6,6 +6,9 @@ import threading
 import hmac
 import re
 import time
+import hashlib
+import base64
+from http.cookies import SimpleCookie
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,6 +46,33 @@ ARCHIVED = archived_history()
 
 INGEST_KEY = os.environ.get('BLITZ_INGEST_KEY', '').strip()
 EXTENSION_KEY = os.environ.get('BLITZ_EXTENSION_KEY', '').strip()
+OWNER_USER = os.environ.get('BLITZ_OWNER_USER','').strip()
+OWNER_PASS_HASH = os.environ.get('BLITZ_OWNER_PASS_HASH','').strip()
+OWNER_SESSION_SECRET = os.environ.get('BLITZ_OWNER_SESSION_SECRET','').strip()
+OWNER_LOGIN_ATTEMPTS = {}
+def owner_token_valid(token):
+    if not (token and OWNER_SESSION_SECRET):
+        return False
+    try:
+        encoded, mac = token.rsplit('.',1)
+        expected=hmac.new(OWNER_SESSION_SECRET.encode(),encoded.encode(),'sha256').hexdigest()
+        if not hmac.compare_digest(expected,mac):
+            return False
+        raw=base64.urlsafe_b64decode(encoded+'='*((-len(encoded))%4)).decode()
+        user,expires=raw.split('|',1)
+        return user==OWNER_USER and int(expires)>int(time.time())
+    except (ValueError,TypeError,UnicodeError):
+        return False
+def owner_password_valid(username,password):
+    if not (OWNER_USER and OWNER_PASS_HASH and username==OWNER_USER and isinstance(password,str)):
+        return False
+    try:
+        salt,digest=OWNER_PASS_HASH.split(':',1)
+        calculated=hashlib.pbkdf2_hmac('sha256',password.encode('utf-8'),bytes.fromhex(salt),240000)
+        return hmac.compare_digest(calculated.hex(),digest)
+    except (ValueError,TypeError):
+        return False
+
 COLORS = {'amarelo': 'amarelo', 'escuro': 'escuro', 'branco': 'branco'}
 
 
@@ -127,8 +157,30 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def owner_authorized(self):
+        try:
+            cookies=SimpleCookie();cookies.load(self.headers.get('Cookie',''))
+            return owner_token_valid(cookies['blitz_owner'].value) if 'blitz_owner' in cookies else False
+        except Exception:
+            return False
+
     def do_GET(self):
         p = urlsplit(self.path).path
+        if p == '/proprietario.html' and not self.owner_authorized():
+            self.send_response(302)
+            self.send_header('Location','/login.html')
+            self.send_header('Cache-Control','no-store')
+            self.end_headers()
+            return
+        if p == '/api/owner/session':
+            return self.json_response(200, {'authenticated':self.owner_authorized(),'configured':bool(OWNER_USER and OWNER_PASS_HASH and OWNER_SESSION_SECRET)})
+        if p == '/api/owner/overview':
+            if not self.owner_authorized(): return self.json_response(401,{'error':'unauthorized'})
+            with db() as conn:
+                count=conn.execute('SELECT COUNT(*) FROM rounds').fetchone()[0]
+                whites=conn.execute('SELECT COUNT(*) FROM rounds WHERE number=0').fetchone()[0]
+                latest=conn.execute('SELECT number,color,ts,received FROM rounds ORDER BY received DESC LIMIT 1').fetchone()
+            return self.json_response(200, {'observed_rounds':count,'observed_whites':whites,'archive_rounds':len(ARCHIVED),'archive_whites':sum(r['number']==0 for r in ARCHIVED),'latest':dict(zip(('number','color','observed_utc','received_utc'),latest)) if latest else None})
         if p == '/api/extension/version':
             package = ROOT / 'Insight-Blitz4-TipMiner-Extensao.zip'
             return self.json_response(200, {'version': '0.11.0' if package.exists() else None, 'download': '/Insight-Blitz4-TipMiner-Extensao.zip' if package.exists() else None, 'auto_update':False})
@@ -197,12 +249,44 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/':
             self.path = '/index.html'
             return super().do_GET()
-        if p in ('/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html','/extensao.html','/historico-servidor.html','/Insight-Blitz4-TipMiner-Extensao.zip'):
+        if p in ('/login.html','/proprietario.html','/index.html','/painel.html','/monitor.html','/operacao.html','/comparativo.html','/ao-vivo.html','/estrategias.html','/prospectivo.html','/multihorizonte.html','/motor-lab.html','/extensao.html','/historico-servidor.html','/Insight-Blitz4-TipMiner-Extensao.zip'):
             return super().do_GET()
         return self.json_response(404, {'error':'not_found'})
 
     def do_POST(self):
-        if urlsplit(self.path).path == '/api/history/import':
+        target=urlsplit(self.path).path
+        if target == '/api/owner/logout':
+            self.send_response(204)
+            self.send_header('Set-Cookie','blitz_owner=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0')
+            self.send_header('Cache-Control','no-store')
+            self.end_headers()
+            return
+        if target == '/api/owner/login':
+            try:
+                size=int(self.headers.get('Content-Length','0'))
+                if size<2 or size>2048: return self.json_response(400,{'error':'invalid_input'})
+                data=json.loads(self.rfile.read(size))
+                ip=self.client_address[0]; now=time.time()
+                with LOCK:
+                    attempts=[t for t in OWNER_LOGIN_ATTEMPTS.get(ip,[]) if now-t<900]
+                    if len(attempts)>=8: return self.json_response(429,{'error':'too_many_attempts'})
+                    attempts.append(now);OWNER_LOGIN_ATTEMPTS[ip]=attempts
+                if not owner_password_valid(data.get('username',''),data.get('password','')) or not OWNER_SESSION_SECRET:
+                    return self.json_response(401,{'error':'invalid_credentials'})
+                with LOCK: OWNER_LOGIN_ATTEMPTS.pop(ip,None)
+                encoded=base64.urlsafe_b64encode((OWNER_USER+'|'+str(int(now)+8*3600)).encode()).decode().rstrip('=')
+                sig=hmac.new(OWNER_SESSION_SECRET.encode(),encoded.encode(),'sha256').hexdigest()
+                raw=json.dumps({'authenticated':True},ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header('Content-Type','application/json')
+                self.send_header('Set-Cookie','blitz_owner='+encoded+'.'+sig+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800')
+                self.send_header('Cache-Control','no-store')
+                self.send_header('Content-Length',str(len(raw)))
+                self.end_headers();self.wfile.write(raw)
+                return
+            except (ValueError,KeyError,TypeError,json.JSONDecodeError):
+                return self.json_response(400,{'error':'invalid_input'})
+        if target == '/api/history/import':
             auth = self.headers.get('X-Extension-Key','')
             master = self.headers.get('X-Ingest-Key','')
             authorized = bool((EXTENSION_KEY and hmac.compare_digest(auth,EXTENSION_KEY)) or (INGEST_KEY and hmac.compare_digest(master,INGEST_KEY)))
