@@ -1,7 +1,8 @@
 """Coletor Blitz4 24H experimental: requires a documented, authorized JSON results URL.
 No automatic deployment. Never accepts future/unverified or other-game round feeds.
 """
-import json, os, time, hmac, hashlib
+import json, os, time
+from collections import deque
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -11,6 +12,13 @@ TARGET=os.getenv("BLITZ4_INGEST_URL","").strip()
 KEY=os.getenv("BLITZ_INGEST_KEY","").strip()
 INTERVAL=max(2,float(os.getenv("BLITZ4_POLL_SECONDS","3")))
 seen=set()
+seen_order=deque(maxlen=10000)
+def remember(rid):
+    if rid in seen:return
+    if len(seen_order)==seen_order.maxlen:
+        seen.discard(seen_order[0])
+    seen_order.append(rid)
+    seen.add(rid)
 def parse_rounds(doc):
     """Exact contract: {game:'blitz4-double', rounds:[{id,number,created_at}]}, no guessed aliases."""
     if not isinstance(doc,dict) or doc.get("game")!="blitz4-double" or not isinstance(doc.get("rounds"),list):
@@ -23,7 +31,10 @@ def parse_rounds(doc):
         stamp=item.get("created_at")
         if not isinstance(ident,(str,int)) or not isinstance(n,int) or isinstance(n,bool) or not 0<=n<=14 or not isinstance(stamp,str):
             continue
-        dt=datetime.fromisoformat(stamp.replace("Z","+00:00"))
+        try:
+            dt=datetime.fromisoformat(stamp.replace("Z","+00:00"))
+        except ValueError:
+            continue
         if dt.tzinfo is None:continue
         dt=dt.astimezone(timezone.utc)
         if abs((datetime.now(timezone.utc)-dt).total_seconds())>3600:continue
@@ -47,12 +58,12 @@ def run():
                 if item["id"] in seen:continue
                 status,reply=send(item)
                 if status in (200,201):
-                    seen.add(item["id"])
+                    remember(item["id"])
                     print("received",item["id"],item["number"],status,flush=True)
                 else:
                     print("not accepted",status,reply,flush=True)
                     break
-            if len(seen)>10000:seen.clear()
+            # Bounded deduplication without forgetting the entire feed at once.
         except (ValueError,URLError,HTTPError,TimeoutError,KeyError) as exc:
             print("feed or transmission issue:",str(exc)[:200],flush=True)
         time.sleep(INTERVAL)
