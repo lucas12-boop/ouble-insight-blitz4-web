@@ -11,12 +11,14 @@
     const text=entry.querySelector('.roulette-tile .number')?.textContent?.trim();
     const tile=entry.querySelector('.roulette-tile');
     if(!tile)return null;
+    // Confirmed by Blitz4 page inspection: whites have .roulette-tile .sm-box.white > svg.
+    if(tile.querySelector('.sm-box.white svg'))return {number:0,color:'branco'};
     if(/^\d{1,2}$/.test(text||'')){
       const number=Number(text);
       if(number>=1&&number<=14)return {number,color:number<=7?'amarelo':'escuro'};
       if(number===0)return {number:0,color:'branco'};
     }
-    // Do not infer white from background color alone. Needs explicit 0 or an unambiguous indicator.
+    // No guessing from background color alone. Other unknown tile types stay unconfirmed.
     const marker=[title(tile),title(entry),tile.textContent||''].join(' ').trim().toLowerCase();
     if(/(^|\s)(white|branco|zero|0)(\s|$)/.test(marker)&&!/[1-9]/.test(marker))
       return {number:0,color:'branco'};
