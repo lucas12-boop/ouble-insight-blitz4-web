@@ -85,8 +85,19 @@ function render(rows){
  const minuteRows=Array.isArray(historic)&&historic.length?whiteMinuteStudy(historic):[];renderTable('whiteMinutes',minuteRows,x=>['**:'+x.minute,x.whites,x.rounds,x.rate.toFixed(2)+'%',x.days+'/7']);$('whiteMinutesNote').textContent=minuteRows.length?'Dados históricos, agrupados pelo minuto do relógio de Brasília e ranqueados por dias com branco. Amostra não indica acerto futuro.':'Aguardando importação dos sete dias; nenhum horário inventado.';
  renderTable('events',st.events.slice().reverse().slice(0,30),x=>[x.when,x.type,x.detail]);$('summary').textContent='Eventos: '+st.events.length+' · Operações: '+st.results.length+' · Última pedra processada: '+(st.seen||'—');
 }
+let lastRoundsEtag='';
 async function tick(){
- try{const r=await fetch('/api/rounds?limit=500',{cache:'no-store'});if(!r.ok)throw Error('API HTTP '+r.status);const raw=(await r.json()).rounds||[];
+ try{const headers=lastRoundsEtag?{'If-None-Match':lastRoundsEtag}:{};const r=await fetch('/api/rounds?limit=500',{cache:'no-store',headers});
+ if(r.status===304){
+   const latest=st.history?.at(-1);const received=latest?.received_utc||latest?.timestamp_utc;
+   const age=Date.now()-Date.parse(received||'');
+   if(!Number.isFinite(age)||age>20000){
+     st.pending=null;st.started=false;st.seen=null;window.__signalWaitReason='captura sem novas pedras por mais de 20s';persist();$('connection').textContent='⚠ CAPTURA ATRASADA · SINAIS SUSPENSOS';
+   }else $('connection').textContent='AGUARDANDO PRÓXIMA PEDRA · '+Math.round(age/1000)+'s desde recebimento';
+   return;
+ }
+ if(!r.ok)throw Error('API HTTP '+r.status);lastRoundsEtag=r.headers.get('ETag')||'';
+ const raw=(await r.json()).rounds||[];
  if(!raw.length){$('connection').textContent='CAPTURA INDISPONÍVEL · SEM PEDRAS';st.pending=null;render([]);return}
  st.history=raw.slice(-500);const latest=raw.at(-1),newest=Date.parse(latest.received_utc||latest.timestamp_utc);const stale=!Number.isFinite(newest)||Date.now()-newest>20000;if(stale){window.__signalWaitReason='mais de 20 segundos sem receber rodada nova; sinais suspensos';st.pending=null;st.started=false;st.seen=null;persist();render(raw);$('connection').textContent='⚠ CAPTURA ATRASADA · SINAIS SUSPENSOS';return}
  if(!st.started){st.started=true;st.seen=raw.at(-1).id;event('START','Sessão iniciada após '+st.seen);const pick=choose(raw);window.__signalWaitReason=pick.why;if(pick.color){st.pending={color:pick.color,why:pick.why,after:raw.at(-1),step:0,displayed:true};event('SIGNAL','Novo sinal observado após pedra '+raw.at(-1).number)}persist();render(raw);$('connection').textContent='Sessão iniciada';return}
