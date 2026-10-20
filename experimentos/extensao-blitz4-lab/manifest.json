@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Blitz4 Leitor Direto LAB",
+  "version": "0.1.0",
+  "description": "Observa resultados visíveis da Blitz4 localmente; não envia dados.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://blitz4.casino/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://blitz4.casino/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
