@@ -17,7 +17,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / 'rounds.sqlite3'
 LOCK = threading.Lock()
 
-HISTORY_FILE = ROOT / 'historico_7dias.csv'
+HISTORY_FILE = DATA_DIR / 'historico_7dias.csv'
+if not HISTORY_FILE.exists() and (ROOT / 'historico_7dias.csv').exists():
+    import shutil
+    shutil.copyfile(ROOT / 'historico_7dias.csv', HISTORY_FILE)
 def archived_history():
     if not HISTORY_FILE.exists():
         return []
@@ -133,6 +136,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(200, {'status': 'ok', 'app': 'double-insight-blitz4-lab'})
         if p == '/api/historical/7days':
             return self.json_response(200, {'loaded': bool(ARCHIVED), 'count':len(ARCHIVED),'whites':sum(r['number']==0 for r in ARCHIVED),'rounds':ARCHIVED})
+        if p == '/api/history/status':
+            return self.json_response(200, {'installed':bool(ARCHIVED),'count':len(ARCHIVED),'whites':sum(r['number']==0 for r in ARCHIVED),'persistent':str(HISTORY_FILE).startswith(str(DATA_DIR))})
         if p == '/api/replay/state':
             return self.json_response(200, replay_state())
         if p == '/api/status':
@@ -183,6 +188,37 @@ class Handler(SimpleHTTPRequestHandler):
         return self.json_response(404, {'error':'not_found'})
 
     def do_POST(self):
+        if urlsplit(self.path).path == '/api/history/import':
+            auth = self.headers.get('X-Extension-Key','')
+            master = self.headers.get('X-Ingest-Key','')
+            authorized = bool((EXTENSION_KEY and hmac.compare_digest(auth,EXTENSION_KEY)) or (INGEST_KEY and hmac.compare_digest(master,INGEST_KEY)))
+            if not authorized:
+                return self.json_response(401, {'error':'unauthorized'})
+            try:
+                size = int(self.headers.get('Content-Length','0'))
+                if size < 1000 or size > 1500000:
+                    return self.json_response(413, {'error':'csv_size_invalid'})
+                body = self.rfile.read(size).decode('utf-8-sig')
+                parsed = list(csv.DictReader(body.splitlines()))
+                if not 1000 <= len(parsed) <= 50000:
+                    raise ValueError('row_count_invalid')
+                valid = []
+                for item in parsed:
+                    n = int(item['number'])
+                    stamp = item['timestamp'].strip()
+                    color = 'branco' if n == 0 else 'amarelo' if n <= 7 else 'escuro'
+                    if n < 0 or n > 14 or item['color'].strip() != color or not re.fullmatch(r'20\\d{2}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}',stamp):
+                        raise ValueError('csv_data_invalid')
+                    valid.append(item)
+                with LOCK:
+                    temporary=HISTORY_FILE.with_suffix('.tmp')
+                    temporary.write_text(body,encoding='utf-8')
+                    temporary.replace(HISTORY_FILE)
+                    global ARCHIVED
+                    ARCHIVED = archived_history()
+                return self.json_response(201, {'installed':True,'count':len(ARCHIVED),'whites':sum(r['number']==0 for r in ARCHIVED)})
+            except (ValueError,KeyError,UnicodeError,TypeError):
+                return self.json_response(400, {'error':'invalid_historical_csv'})
         if urlsplit(self.path).path != '/api/ingest':
             return self.json_response(404, {'error': 'not_found'})
         supplied = self.headers.get('X-Ingest-Key', '')
