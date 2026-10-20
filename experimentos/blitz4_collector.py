@@ -1,8 +1,7 @@
 """Coletor Blitz4 24H experimental: requires a documented, authorized JSON results URL.
 No automatic deployment. Never accepts future/unverified or other-game round feeds.
 """
-import json, os, time
-from collections import deque
+import json, os, time, sqlite3
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -11,14 +10,18 @@ SOURCE_URL=os.getenv("BLITZ4_RESULTS_URL","").strip()
 TARGET=os.getenv("BLITZ4_INGEST_URL","").strip()
 KEY=os.getenv("BLITZ_INGEST_KEY","").strip()
 INTERVAL=max(2,float(os.getenv("BLITZ4_POLL_SECONDS","3")))
-seen=set()
-seen_order=deque(maxlen=10000)
-def remember(rid):
-    if rid in seen:return
-    if len(seen_order)==seen_order.maxlen:
-        seen.discard(seen_order[0])
-    seen_order.append(rid)
-    seen.add(rid)
+STATE_DB=os.getenv("BLITZ4_COLLECTOR_DB","./blitz4_collector_state.sqlite3")
+def connect_db():
+    conn=sqlite3.connect(STATE_DB, timeout=15)
+    conn.execute("CREATE TABLE IF NOT EXISTS delivered (id TEXT PRIMARY KEY, number INTEGER NOT NULL, official_time TEXT NOT NULL, delivered_at TEXT NOT NULL)")
+    conn.commit()
+    return conn
+def is_delivered(conn,rid):
+    return conn.execute("SELECT 1 FROM delivered WHERE id=?",(rid,)).fetchone() is not None
+def remember(conn,item):
+    conn.execute("INSERT OR IGNORE INTO delivered (id,number,official_time,delivered_at) VALUES (?,?,?,?)",
+        (item["id"],item["number"],item["timestamp_utc"],datetime.now(timezone.utc).isoformat()))
+    conn.commit()
 def parse_rounds(doc):
     """Exact contract: {game:'blitz4-double', rounds:[{id,number,created_at}]}, no guessed aliases."""
     if not isinstance(doc,dict) or doc.get("game")!="blitz4-double" or not isinstance(doc.get("rounds"),list):
@@ -49,21 +52,22 @@ def send(item):
 def run():
     if not (SOURCE_URL.startswith("https://") and TARGET.startswith("https://") and KEY):
         raise SystemExit("Collector inactive: set authorized BLITZ4_RESULTS_URL, BLITZ4_INGEST_URL, BLITZ_INGEST_KEY")
+    conn=connect_db()
     print("experimental collector starting; source must be verified independently",flush=True)
     while True:
         try:
             with urlopen(Request(SOURCE_URL,headers={"Accept":"application/json"}),timeout=8) as response:
                 doc=json.load(response)
             for item in parse_rounds(doc):
-                if item["id"] in seen:continue
+                if is_delivered(conn,item["id"]):continue
                 status,reply=send(item)
                 if status in (200,201):
-                    remember(item["id"])
+                    remember(conn,item)
                     print("received",item["id"],item["number"],status,flush=True)
                 else:
                     print("not accepted",status,reply,flush=True)
                     break
-            # Bounded deduplication without forgetting the entire feed at once.
+            # Successful delivery is persisted; restart will not resend acknowledged IDs.
         except (ValueError,URLError,HTTPError,TimeoutError,KeyError) as exc:
             print("feed or transmission issue:",str(exc)[:200],flush=True)
         time.sleep(INTERVAL)
