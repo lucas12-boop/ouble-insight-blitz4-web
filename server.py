@@ -211,8 +211,8 @@ class Handler(SimpleHTTPRequestHandler):
             skew = (parsed.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
             if skew > 10 or skew < -86400:
                 return self.json_response(422, {'error':'timestamp_outside_allowed_window'})
-            if extension_auth and (num == 0 or not rid.startswith('dom-')):
-                return self.json_response(422, {'error':'extension_non_numeric_or_invalid_id'})
+            if extension_auth and not rid.startswith('dom-'):
+                return self.json_response(422, {'error':'extension_invalid_id'})
             color = 'branco' if num == 0 else 'amarelo' if num <= 7 else 'escuro'
             if payload.get('color', color) != color:
                 raise ValueError('Color mismatch')
