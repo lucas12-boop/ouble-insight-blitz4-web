@@ -58,7 +58,7 @@ function showObservedTime(t){const d=new Date(t);return Number.isNaN(d.getTime()
 function renderTable(id,data,columns){const tbody=$(id);tbody.replaceChildren();for(const item of data){const tr=document.createElement('tr');for(const v of columns(item)){const td=document.createElement('td');td.textContent=String(v);tr.append(td)}tbody.append(tr)}}
 function whiteMinuteStudy(rows){
  const buckets=new Map();
- for(const r of rows){const t=String(r.timestamp||r.timestamp_utc||'');const match=t.match(/T(\\d{2}):(\\d{2}):/);if(!match)continue;const minute=Number(match[2]),day=t.slice(0,10),b=buckets.get(minute)||{minute,rounds:0,whites:0,days:new Set()};b.rounds++;if(r.number===0||r.color==='branco'){b.whites++;b.days.add(day)}buckets.set(minute,b)}
+ for(const r of rows){const t=String(r.timestamp||r.timestamp_utc||'');const match=t.match(/T(\d{2}):(\d{2}):/);if(!match)continue;const minute=Number(match[2]),day=t.slice(0,10),b=buckets.get(minute)||{minute,rounds:0,whites:0,days:new Set()};b.rounds++;if(r.number===0||r.color==='branco'){b.whites++;b.days.add(day)}buckets.set(minute,b)}
  return [...buckets.values()].filter(x=>x.rounds>=80).map(x=>({minute:String(x.minute).padStart(2,'0'),rounds:x.rounds,whites:x.whites,days:x.days.size,rate:100*x.whites/x.rounds})).sort((a,b)=>b.days-a.days||b.rate-a.rate||b.whites-a.whites).slice(0,12)
 }
 function whiteRadar(rows){
